@@ -133,3 +133,49 @@ since that avoids the browser flow entirely, but it wasn't needed.
   match score of 88, the CTC lakhs/rupees cutoff of 100) were chosen by
   inspecting the real value distributions in the CSVs, not defaults taken
   on faith.
+
+## Task 2: n8n Automation — LLM-based Skill Tagging
+
+**Flow:** `n8n/skill-tagging-workflow.json`
+
+A manually-triggered n8n workflow that:
+1. Queries MySQL for every person who doesn't yet have a `skill_category`,
+   combining their skills from `staging_naukri` and `staging_gig_workers`
+2. Loops over each person one at a time (Loop Over Items, batch size 1)
+3. Sends their combined skills to **Google Gemini** (`gemini-flash-lite-latest`)
+   with a classification prompt, asking it to pick one of:
+   `automation-heavy`, `web dev`, `data`, `other`
+4. Waits 5 seconds (to stay within Gemini's free-tier rate limit of
+   15 requests/minute)
+5. Writes the returned category back into `people.skill_category` in MySQL
+6. Loops back for the next person, until all are tagged
+
+**Result:** all 55 people successfully classified, 0 left untagged.
+
+### Why Gemini free tier instead of a paid API
+
+The task only requires "an LLM step" - it doesn't specify a paid provider.
+Google AI Studio's Gemini free tier requires no credit card and comfortably
+covers this volume (1,500 requests/day vs. the 55 needed here), so using it
+kept this take-home assignment at zero cost without compromising on using a
+real, capable LLM.
+
+### Why `gemini-flash-lite-latest` specifically
+
+This is a simple single-label classification task with no need for deep
+reasoning, so the lightest/fastest model was the right fit - `gemini-2.5-pro`
+would have added latency and a much stricter free-tier cap (50 requests/day)
+for no quality benefit here. The `-latest` alias was chosen over a pinned
+version number after an earlier pinned model (`gemini-3.5-flash-lite`) was
+deprecated for new users mid-task; the alias avoids that failure mode going
+forward.
+
+### Why "Loop Over Items" + "Wait" instead of relying on n8n's per-item execution
+
+n8n normally fires a downstream node once per input item without any node
+telling it to. Left alone, that meant all 55 requests hit the Gemini API
+back-to-back and the free tier's 15 requests/minute limit was exceeded by
+item 16. Wrapping the LLM call in an explicit Loop Over Items (batch size 1)
+→ Gemini → Wait (5s) → back to Loop cycle throttles requests to roughly
+12/minute, comfortably under the limit, at the cost of the whole run taking
+~5 minutes instead of a few seconds.
