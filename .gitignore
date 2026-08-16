@@ -1,3 +1,5 @@
 .env
 __pycache__/
 *.pyc
+audio_app/uploads/*
+!audio_app/uploads/.gitkeep
