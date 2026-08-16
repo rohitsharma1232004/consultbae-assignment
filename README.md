@@ -179,3 +179,58 @@ item 16. Wrapping the LLM call in an explicit Loop Over Items (batch size 1)
 → Gemini → Wait (5s) → back to Loop cycle throttles requests to roughly
 12/minute, comfortably under the limit, at the cost of the whole run taking
 ~5 minutes instead of a few seconds.
+
+## Task 3: Mini Audio Collection App
+
+**Location:** `audio_app/` — run with `streamlit run audio_app/app.py`
+
+A Streamlit web app with two views:
+
+1. **Submit Audio** — enter name + phone, record audio via the browser
+   mic or upload a file, hit Submit. On submit the app:
+   - Saves the audio file to `audio_app/uploads/`
+   - Extracts **duration, sample rate, bitrate, and loudness (dB)**,
+     plus a bonus rough **noise/signal-quality estimate**
+   - Looks up the phone number against the Task 1 `people` table
+     (reusing the same phone-normalization logic from `scripts/normalize.py`)
+     - If the person already exists (e.g. they were in one of the
+       original 3 CSVs), the submission is linked to their existing record
+     - If not, a new `people` record is created for them
+   - Writes the submission + extracted properties into a new
+     `audio_submissions` table (linked to `people` via `person_id`)
+
+2. **All Submissions** — lists every submission with an inline audio
+   player and its extracted properties.
+
+### Audio feature extraction
+
+| Property | How it's computed |
+|---|---|
+| Duration | `librosa.get_duration()` |
+| Sample rate | Native rate read by `librosa.load(sr=None)` (not resampled) |
+| Bitrate | File size (bits) ÷ duration - works across formats (wav, webm, mp3) since it doesn't depend on a fixed container bitrate field |
+| Loudness | RMS-based dBFS: `20 * log10(rms(signal))` |
+| Noise estimate (bonus) | Compares the 90th vs 10th percentile of frame-wise RMS - a bigger gap means cleaner audio (quiet parts are actually quiet), a small gap means consistent background noise throughout |
+
+### Database
+
+Extends the same `consultbae` MySQL database from Task 1 (not a separate
+database) - see `sql/002_task2_task3_updates.sql` for the new
+`audio_submissions` table. This directly satisfies the requirement that
+a submission's "record goes into your database from Task 1."
+
+### Setup
+
+```bash
+pip install -r requirements.txt          # includes streamlit, librosa, pydub, soundfile
+# Install ffmpeg (required by pydub to decode browser-recorded webm/mp3):
+#   Windows: winget install ffmpeg
+#   Mac:     brew install ffmpeg
+#   Linux:   apt install ffmpeg
+mysql -u root -p consultbae < sql/002_task2_task3_updates.sql
+streamlit run audio_app/app.py
+```
+
+Note: audio files saved under `audio_app/uploads/` are gitignored (only
+code is versioned, not recorded test audio) - the app recreates that
+folder automatically on first run if it's missing.
