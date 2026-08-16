@@ -297,3 +297,11 @@ well before 5,000 - roughly in this order:
   processing is cheap at this scale (a few GB of audio + light compute)
   - the real cost risk isn't the infrastructure, it's un-deduplicated
   storage growing unbounded if duplicate submissions aren't caught early.
+  ### Deployment
+
+Exposed locally via ngrok during the demo recording (`ngrok http 8501`),
+since the app connects to a local MySQL instance - a full cloud deploy
+would require also hosting the database somewhere publicly reachable,
+which wasn't necessary given the app just needs to be demonstrably
+working end-to-end for evaluation. This matches the assignment's stated
+option to deploy "anywhere free... ngrok during your video."
