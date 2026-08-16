@@ -234,3 +234,66 @@ streamlit run audio_app/app.py
 Note: audio files saved under `audio_app/uploads/` are gitignored (only
 code is versioned, not recorded test audio) - the app recreates that
 folder automatically on first run if it's missing.
+
+## Task 5: Stretch — Scaling to 5,000 Gig Workers in a Weekend
+
+If this audio app were launched to 5,000 workers over a single weekend,
+several things in the current setup would break or become a liability
+well before 5,000 - roughly in this order:
+
+### What breaks first
+
+1. **Local file storage.** Audio is saved to a folder on the server's
+   own disk (`audio_app/uploads/`). At even a modest 500KB-2MB per
+   clip, 5,000 submissions is 2.5-10GB - fine for disk space, but the
+   real problem is that most free/cheap hosting (Render, Railway free
+   tiers, etc.) uses **ephemeral storage**: the disk gets wiped on every
+   redeploy or restart. Every submitted audio file would silently
+   vanish the next time the app restarts.
+
+2. **SQLite-style single-writer contention** - not applicable here since
+   this uses MySQL, but the single MySQL instance itself has no
+   connection pooling configured. Streamlit opens a new
+   `mysql.connector` connection per request with no pool/reuse; under
+   concurrent load (many workers submitting within the same minute)
+   this would exhaust MySQL's `max_connections` quickly.
+
+3. **No upload size/type validation.** A malicious or just careless
+   worker could upload a 500MB file or a non-audio file; there's
+   currently no size cap, so a few large uploads could fill disk or
+   time out the request.
+
+4. **No duplicate-submission handling.** Nothing stops the same worker
+   from submitting audio 20 times (accidentally double-clicking Submit,
+   retrying after a slow network, etc.) - each becomes a separate
+   `audio_submissions` row with no de-duplication.
+
+5. **Single-threaded processing.** `librosa.load()` + feature extraction
+   runs synchronously in the same request that's saving the file - a
+   worker with a slow connection uploading a large file blocks that
+   whole worker thread; Streamlit's default setup doesn't scale this
+   well under concurrent load.
+
+### What I'd change before launch
+
+- **Move file storage to S3 (or equivalent object storage)** instead of
+  local disk - solves both the ephemeral-storage problem and gives
+  durable, horizontally-scalable storage. The app would upload directly
+  to a pre-signed S3 URL rather than routing the file through the
+  Streamlit server.
+- **Move feature extraction off the request path** - accept the upload,
+  save it, and enqueue an async job (e.g. a simple queue + worker, or
+  even just a background thread pool) to compute duration/bitrate/etc.
+  afterward, so a slow analysis doesn't block the next worker's submission.
+- **Add a connection pool** (e.g. `mysql.connector.pooling` or moving to
+  SQLAlchemy's pool) instead of one raw connection per request.
+- **Add basic upload guards:** max file size, allowed MIME types/extensions,
+  and a rate limit per phone number (e.g. max N submissions per hour) to
+  catch accidental duplicate submissions without blocking legitimate retries.
+- **Add a duplicate-detection heuristic**, e.g. flag (don't necessarily
+  block) submissions from the same phone number within a short window,
+  so a human can quickly review and dedupe rather than silently losing data.
+- **Cost:** S3 storage + a small always-on worker process for async
+  processing is cheap at this scale (a few GB of audio + light compute)
+  - the real cost risk isn't the infrastructure, it's un-deduplicated
+  storage growing unbounded if duplicate submissions aren't caught early.
